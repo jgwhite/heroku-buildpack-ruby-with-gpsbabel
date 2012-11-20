@@ -1,7 +1,8 @@
+require "bundler/setup"
 require "fileutils"
 require "tmpdir"
 
-S3_BUCKET_NAME  = "heroku-buildpack-ruby"
+S3_BUCKET_NAME  = "heroku-buildpack-ruby-with-gpsbabel"
 VENDOR_URL      = "https://s3.amazonaws.com/#{S3_BUCKET_NAME}"
 
 def s3_tools_dir
@@ -125,8 +126,8 @@ end
 desc "install node"
 task "node:install", :version do |t, args|
   version = args[:version]
-  name    = "node-#{version}"
-  prefix  = "/app/vendor/node-v#{version}"
+  name    = "node-v#{version}"
+  prefix  = "/app/vendor/#{name}"
   Dir.mktmpdir("node-") do |tmpdir|
     Dir.chdir(tmpdir) do |dir|
       FileUtils.rm_rf("#{tmpdir}/*")
@@ -134,16 +135,17 @@ task "node:install", :version do |t, args|
       sh "curl http://nodejs.org/dist/node-v#{version}.tar.gz -s -o - | tar vzxf -"
 
       build_command = [
-        "./configure --prefix #{prefix}",
+        "./configure --prefix=#{prefix}",
+        "make",
         "make install",
-        "mv #{prefix}/bin/node #{prefix}/.",
+        "mv #{prefix}/bin/node #{prefix}",
         "rm -rf #{prefix}/include",
         "rm -rf #{prefix}/lib",
         "rm -rf #{prefix}/share",
         "rm -rf #{prefix}/bin"
       ].join(" && ")
 
-      sh "vulcan build -v -o #{name}.tgz --source node-v#{version} --command=\"#{build_command}\""
+      sh "vulcan build -v -o #{name}.tgz --source #{name} --prefix=#{prefix} --command=\"#{build_command}\""
       s3_upload(tmpdir, name)
     end
   end
@@ -310,7 +312,7 @@ task "ruby:manifest" do
   require 'yaml'
 
   document = REXML::Document.new(`curl https://#{S3_BUCKET_NAME}.s3.amazonaws.com`)
-  rubies   = document.elements.to_a("//Contents/Key").map {|node| node.text }.select {|text| text.match(/^(ruby|rbx|jruby)-\\\\d+\\\\.\\\\d+\\\\.\\\\d+(-p\\\\d+)?/) }
+  rubies   = document.elements.to_a("//Contents/Key").map {|node| node.text }.select {|text| text.match(/^(ruby|rbx|jruby)-\d+\.\d+\.\d+(-p\d+)?/) }
 
   Dir.mktmpdir("ruby_versions-") do |tmpdir|
     name = 'ruby_versions.yml'
@@ -340,6 +342,32 @@ task "libffi:install", :version do |t, args|
 
       sh "vulcan build -v -o #{name}.tgz --source #{name} --prefix=#{prefix} --command=\"#{build_command}\""
       s3_upload(tmpdir, name)
+    end
+  end
+end
+
+desc "install gpsbabel"
+task "gpsbabel:install" do |t|
+  name   = "gpsbabel-1.4.4"
+  source = File.expand_path "../support/#{name}.tgz", __FILE__
+  prefix = "/app/vendor/#{name}"
+
+  Dir.mktmpdir "gpsbabel-" do |tmpdir|
+    Dir.chdir tmpdir do |dir|
+      FileUtils.rm_rf "#{tmpdir}/*"
+      sh "cat #{source} | tar vzxf -"
+      build_command = [
+        "./configure --prefix #{prefix}",
+        "make",
+        "make install",
+        "mv #{prefix}/bin/gpsbabel #{prefix}",
+        "rm -rf #{prefix}/include",
+        "rm -rf #{prefix}/lib",
+        "rm -rf #{prefix}/share",
+        "rm -rf #{prefix}/bin"
+      ].join " && "
+      sh "vulcan build -v -o #{name}.tgz --source #{name} --prefix=#{prefix} --command=\"#{build_command}\""
+      s3_upload tmpdir, name
     end
   end
 end
